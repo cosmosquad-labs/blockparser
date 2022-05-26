@@ -9,7 +9,6 @@ import (
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/spf13/cobra"
-	sm "github.com/tendermint/tendermint/state"
 	"github.com/tendermint/tendermint/store"
 )
 
@@ -42,7 +41,6 @@ func NewBlockParserCmd() *cobra.Command {
 			defer stateDB.Close()
 
 			blockStore := store.NewBlockStore(db)
-			stateStore := sm.NewStore(stateDB)
 
 			fmt.Println("Loaded : ", dir+"/data/")
 			fmt.Println("Input Start Height :", startHeight)
@@ -70,7 +68,7 @@ func NewBlockParserCmd() *cobra.Command {
 			}
 
 			blockList := []string{}
-			validatorList := []string{}
+			//validatorList := []string{}
 			for i := startHeight; i < endHeight; i++ {
 				if i%10000 == 0 {
 					fmt.Println(i)
@@ -81,24 +79,10 @@ func NewBlockParserCmd() *cobra.Command {
 				}
 				blockList = append(blockList, string(b))
 
-				vals, err := stateStore.LoadValidators(i)
-				if err != nil {
-					panic(err)
-				}
-				b, err = json.Marshal(vals)
-				if err != nil {
-					panic(err)
-				}
-				validatorList = append(validatorList, string(b))
 			}
 			blockOutput := strings.Join(blockList, "\n")
-			validatorOutput := strings.Join(validatorList, "\n")
 
 			err = ioutil.WriteFile(fmt.Sprintf("blocks-%d-%d.json", startHeight, endHeight), []byte(blockOutput), 0644)
-			if err != nil {
-				panic(err)
-			}
-			err = ioutil.WriteFile(fmt.Sprintf("validators-%d-%d.json", startHeight, endHeight), []byte(validatorOutput), 0644)
 			if err != nil {
 				panic(err)
 			}
