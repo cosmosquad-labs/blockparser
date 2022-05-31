@@ -1,14 +1,13 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"strconv"
-	"strings"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/spf13/cobra"
+
+	"github.com/tendermint/tendermint/state"
 	"github.com/tendermint/tendermint/store"
 )
 
@@ -41,6 +40,7 @@ func NewBlockParserCmd() *cobra.Command {
 			defer stateDB.Close()
 
 			blockStore := store.NewBlockStore(db)
+			stateStore := state.NewStore(stateDB)
 
 			fmt.Println("Loaded : ", dir+"/data/")
 			fmt.Println("Input Start Height :", startHeight)
@@ -67,26 +67,43 @@ func NewBlockParserCmd() *cobra.Command {
 				return nil
 			}
 
-			blockList := []string{}
+			//blockList := []string{}
+			//swapTxs := []abci.Event{}
+			//swapEndBlocks := []abci.Event{}
 			//validatorList := []string{}
 			for i := startHeight; i < endHeight; i++ {
 				if i%10000 == 0 {
 					fmt.Println(i)
 				}
-				b, err := json.Marshal(blockStore.LoadBlockCommit(i))
+				//b, err := json.Marshal(blockStore.LoadBlockCommit(i))
+				//if err != nil {
+				//	panic(err)
+				//}
+				//blockList = append(blockList, string(b))
+				results, err := stateStore.LoadABCIResponses(i)
 				if err != nil {
-					panic(err)
+					return err
 				}
-				blockList = append(blockList, string(b))
+				for _, i := range results.DeliverTxs {
+					for _, j := range i.Events {
+						if j.Type == "limit_order" {
+							fmt.Println(j.Type, j.String())
+						}
+					}
+				}
 
+				for _, i := range results.EndBlock.Events {
+					fmt.Println(i.Type, i.String())
+				}
+				//results.BeginBlock.Events
 			}
-			blockOutput := strings.Join(blockList, "\n")
+			//blockOutput := strings.Join(blockList, "\n")
 
-			err = ioutil.WriteFile(fmt.Sprintf("blocks-%d-%d.json", startHeight, endHeight), []byte(blockOutput), 0644)
-			if err != nil {
-				panic(err)
-			}
-			fmt.Println("Done! check the output files on current dir")
+			//err = ioutil.WriteFile(fmt.Sprintf("blocks-%d-%d.json", startHeight, endHeight), []byte(blockOutput), 0644)
+			//if err != nil {
+			//	panic(err)
+			//}
+			//fmt.Println("Done! check the output files on current dir")
 			return nil
 		},
 	}
