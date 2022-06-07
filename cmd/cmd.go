@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/spf13/cobra"
@@ -13,8 +14,8 @@ import (
 
 func NewBlockParserCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:  "blockparser [chain-dir] [start-height] [end-height]",
-		Args: cobra.ExactArgs(3),
+		Use:  "blockparser [chain-dir] [start-height] [end-height] [search-string]",
+		Args: cobra.ExactArgs(4),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := args[0]
 			startHeight, err := strconv.ParseInt(args[1], 10, 64)
@@ -26,12 +27,13 @@ func NewBlockParserCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("parse end-Height: %w", err)
 			}
+			searchStr := args[3]
 
-			db, err := sdk.NewLevelDB("data/blockstore", dir)
+			blockDB, err := sdk.NewLevelDB("data/blockstore", dir)
 			if err != nil {
 				panic(err)
 			}
-			defer db.Close()
+			defer blockDB.Close()
 
 			stateDB, err := sdk.NewLevelDB("data/state", dir)
 			if err != nil {
@@ -39,8 +41,15 @@ func NewBlockParserCmd() *cobra.Command {
 			}
 			defer stateDB.Close()
 
-			blockStore := store.NewBlockStore(db)
+			txDB, err := sdk.NewLevelDB("data/tx_index", dir)
+			if err != nil {
+				panic(err)
+			}
+			defer txDB.Close()
+
+			blockStore := store.NewBlockStore(blockDB)
 			stateStore := state.NewStore(stateDB)
+			//txStore := kv.NewTxIndex(txDB)
 
 			fmt.Println("Loaded : ", dir+"/data/")
 			fmt.Println("Input Start Height :", startHeight)
@@ -66,36 +75,38 @@ func NewBlockParserCmd() *cobra.Command {
 				fmt.Println(endHeight, "is not available, Latest Height : ", blockStore.Height())
 				return nil
 			}
-
-			//blockList := []string{}
-			//swapTxs := []abci.Event{}
-			//swapEndBlocks := []abci.Event{}
-			//validatorList := []string{}
 			for i := startHeight; i < endHeight; i++ {
-				if i%10000 == 0 {
-					fmt.Println(i)
-				}
-				//b, err := json.Marshal(blockStore.LoadBlockCommit(i))
-				//if err != nil {
-				//	panic(err)
+				//if i%10000 == 0 {
+				//	fmt.Println(i)
 				//}
-				//blockList = append(blockList, string(b))
 				results, err := stateStore.LoadABCIResponses(i)
 				if err != nil {
 					return err
 				}
-				for _, i := range results.DeliverTxs {
-					for _, j := range i.Events {
-						if j.Type == "limit_order" {
-							fmt.Println(j.Type, j.String())
+				for _, tx := range results.DeliverTxs {
+					txStr := tx.String()
+					if strings.Contains(txStr, searchStr) {
+						log, err := sdk.ParseABCILogs(tx.Log)
+						logStr := ""
+						if err != nil {
+							logStr = txStr
 						}
+						logStr = log.String()
+						fmt.Println(i, "[txs]", logStr)
 					}
 				}
 
-				for _, i := range results.EndBlock.Events {
-					fmt.Println(i.Type, i.String())
+				for _, event := range results.EndBlock.Events {
+					if strings.Contains(event.String(), searchStr) {
+						fmt.Println(i, "[beginblock]", event.String())
+					}
+
 				}
-				//results.BeginBlock.Events
+				for _, event := range results.EndBlock.Events {
+					if strings.Contains(event.String(), searchStr) {
+						fmt.Println(i, "[endblock]", event.String())
+					}
+				}
 			}
 			//blockOutput := strings.Join(blockList, "\n")
 
