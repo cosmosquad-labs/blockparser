@@ -3,19 +3,25 @@ package cmd
 import (
 	"fmt"
 	"strconv"
-	"strings"
+	"time"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/types/query"
+	liquiditytypes "github.com/crescent-network/crescent/x/liquidity/types"
 	"github.com/spf13/cobra"
 
-	"github.com/tendermint/tendermint/state"
+	abci "github.com/tendermint/tendermint/abci/types"
+	"github.com/tendermint/tendermint/libs/log"
+	tmproto "github.com/tendermint/tendermint/proto/tendermint/types"
 	"github.com/tendermint/tendermint/store"
+
+	"github.com/crescent-network/crescent/app"
 )
 
 func NewBlockParserCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:  "blockparser [chain-dir] [start-height] [end-height] [search-string]",
-		Args: cobra.ExactArgs(4),
+		Use:  "blockparser [chain-dir] [start-height] [end-height]",
+		Args: cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := args[0]
 			startHeight, err := strconv.ParseInt(args[1], 10, 64)
@@ -27,7 +33,6 @@ func NewBlockParserCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("parse end-Height: %w", err)
 			}
-			searchStr := args[3]
 
 			blockDB, err := sdk.NewLevelDB("data/blockstore", dir)
 			if err != nil {
@@ -47,8 +52,14 @@ func NewBlockParserCmd() *cobra.Command {
 			}
 			defer txDB.Close()
 
+			db, err := sdk.NewLevelDB("data/application", dir)
+			if err != nil {
+				panic(err)
+			}
+			defer db.Close()
+
 			blockStore := store.NewBlockStore(blockDB)
-			stateStore := state.NewStore(stateDB)
+			//stateStore := state.NewStore(stateDB)
 			//txStore := kv.NewTxIndex(txDB)
 
 			fmt.Println("Loaded : ", dir+"/data/")
@@ -75,46 +86,50 @@ func NewBlockParserCmd() *cobra.Command {
 				fmt.Println(endHeight, "is not available, Latest Height : ", blockStore.Height())
 				return nil
 			}
+
+			encCfg := app.MakeEncodingConfig()
+			app := app.NewApp(log.NewNopLogger(), db, nil, false, map[int64]bool{}, "localnet", 0, encCfg, app.EmptyAppOptions{})
+			if err := app.LoadHeight(startHeight); err != nil {
+				panic(err)
+			}
+			ctx := app.BaseApp.NewContext(true, tmproto.Header{})
+			pairs := app.LiquidityKeeper.GetAllPairs(ctx)
+			startTime := time.Now()
+			orderCount := 0
+			// Height => PairId => Order
+			orderMap := map[int64]map[uint64]liquiditytypes.Order{}
 			for i := startHeight; i < endHeight; i++ {
-				//if i%10000 == 0 {
-				//	fmt.Println(i)
-				//}
-				results, err := stateStore.LoadABCIResponses(i)
-				if err != nil {
-					return err
+				if i%10000 == 0 {
+					fmt.Println(i, time.Now().Sub(startTime), orderCount)
 				}
-				for _, tx := range results.DeliverTxs {
-					txStr := tx.String()
-					if strings.Contains(txStr, searchStr) {
-						log, err := sdk.ParseABCILogs(tx.Log)
-						logStr := ""
-						if err != nil {
-							logStr = txStr
-						}
-						logStr = log.String()
-						fmt.Println(i, "[txs]", logStr)
-					}
-				}
+				orderMap[i] = map[uint64]liquiditytypes.Order{}
 
-				for _, event := range results.EndBlock.Events {
-					if strings.Contains(event.String(), searchStr) {
-						fmt.Println(i, "[beginblock]", event.String())
+				for _, pair := range pairs {
+					a := liquiditytypes.QueryOrdersRequest{
+						PairId: pair.Id,
+						Pagination: &query.PageRequest{
+							Limit: 1000000,
+						},
 					}
-
-				}
-				for _, event := range results.EndBlock.Events {
-					if strings.Contains(event.String(), searchStr) {
-						fmt.Println(i, "[endblock]", event.String())
+					data, err := a.Marshal()
+					if err != nil {
+						return err
+					}
+					res := app.Query(abci.RequestQuery{
+						Path:   "/crescent.liquidity.v1beta1.Query/Orders",
+						Data:   data,
+						Height: i,
+						Prove:  false,
+					})
+					var orders liquiditytypes.QueryOrdersResponse
+					orders.Unmarshal(res.Value)
+					for _, order := range orders.Orders {
+						orderCount++
+						orderMap[i][pair.Id] = order
+						//fmt.Println(order.Id, order.Orderer, order.Amount, order.Price, i)
 					}
 				}
 			}
-			//blockOutput := strings.Join(blockList, "\n")
-
-			//err = ioutil.WriteFile(fmt.Sprintf("blocks-%d-%d.json", startHeight, endHeight), []byte(blockOutput), 0644)
-			//if err != nil {
-			//	panic(err)
-			//}
-			//fmt.Println("Done! check the output files on current dir")
 			return nil
 		},
 	}
