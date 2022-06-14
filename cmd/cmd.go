@@ -12,7 +12,6 @@ import (
 
 	abci "github.com/tendermint/tendermint/abci/types"
 	"github.com/tendermint/tendermint/libs/log"
-	tmproto "github.com/tendermint/tendermint/proto/tendermint/types"
 	"github.com/tendermint/tendermint/store"
 
 	"github.com/crescent-network/crescent/app"
@@ -92,19 +91,42 @@ func NewBlockParserCmd() *cobra.Command {
 			if err := app.LoadHeight(startHeight); err != nil {
 				panic(err)
 			}
-			ctx := app.BaseApp.NewContext(true, tmproto.Header{})
-			pairs := app.LiquidityKeeper.GetAllPairs(ctx)
+			//ctx := app.BaseApp.NewContext(true, tmproto.Header{})
+			//pairs := app.LiquidityKeeper.GetAllPairs(ctx)
 			startTime := time.Now()
 			orderCount := 0
 			// Height => PairId => Order
 			orderMap := map[int64]map[uint64]liquiditytypes.Order{}
+
+			pairsReq := liquiditytypes.QueryPairsRequest{
+				Pagination: &query.PageRequest{
+					Limit: 1000000,
+				},
+			}
+			pairsRewData, err := pairsReq.Marshal()
+			if err != nil {
+				return err
+			}
+
 			for i := startHeight; i < endHeight; i++ {
 				if i%10000 == 0 {
 					fmt.Println(i, time.Now().Sub(startTime), orderCount)
 				}
 				orderMap[i] = map[uint64]liquiditytypes.Order{}
 
-				for _, pair := range pairs {
+				pairsRes := app.Query(abci.RequestQuery{
+					Path:   "/crescent.liquidity.v1beta1.Query/Pairs",
+					Data:   pairsRewData,
+					Height: i,
+					Prove:  false,
+				})
+				var pairsLive liquiditytypes.QueryPairsResponse
+				pairsLive.Unmarshal(pairsRes.Value)
+				//fmt.Println(pairsLive)
+				for _, pair := range pairsLive.Pairs {
+					//if i%333 == 0 {
+					//	fmt.Println(i, pair.Id, pair.LastOrderId, pair.LastPrice)
+					//}
 					a := liquiditytypes.QueryOrdersRequest{
 						PairId: pair.Id,
 						Pagination: &query.PageRequest{
