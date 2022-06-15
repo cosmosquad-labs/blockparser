@@ -8,11 +8,14 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/query"
 	liquiditytypes "github.com/crescent-network/crescent/x/liquidity/types"
-	"github.com/spf13/cobra"
 
+	"github.com/spf13/cobra"
+	"github.com/syndtr/goleveldb/leveldb/opt"
 	abci "github.com/tendermint/tendermint/abci/types"
 	"github.com/tendermint/tendermint/libs/log"
+	txkv "github.com/tendermint/tendermint/state/txindex/kv"
 	"github.com/tendermint/tendermint/store"
+	tmdb "github.com/tendermint/tm-db"
 
 	"github.com/crescent-network/crescent/app"
 )
@@ -44,12 +47,6 @@ func NewBlockParserCmd() *cobra.Command {
 				panic(err)
 			}
 			defer stateDB.Close()
-
-			txDB, err := sdk.NewLevelDB("data/tx_index", dir)
-			if err != nil {
-				panic(err)
-			}
-			defer txDB.Close()
 
 			db, err := sdk.NewLevelDB("data/application", dir)
 			if err != nil {
@@ -86,17 +83,36 @@ func NewBlockParserCmd() *cobra.Command {
 				return nil
 			}
 
+			// Init app
 			encCfg := app.MakeEncodingConfig()
 			app := app.NewApp(log.NewNopLogger(), db, nil, false, map[int64]bool{}, "localnet", 0, encCfg, app.EmptyAppOptions{})
 			if err := app.LoadHeight(startHeight); err != nil {
 				panic(err)
 			}
+
+			// Set tx index
+			store, err := tmdb.NewGoLevelDBWithOpts("data/tx_index", dir, &opt.Options{
+				ErrorIfMissing: true,
+				ReadOnly:       true,
+			})
+			if err != nil {
+				return fmt.Errorf("open db: %w", err)
+			}
+			defer store.Close()
+			txi := txkv.NewTxIndex(store)
+			txDecoder := encCfg.TxConfig.TxDecoder()
+
 			//ctx := app.BaseApp.NewContext(true, tmproto.Header{})
 			//pairs := app.LiquidityKeeper.GetAllPairs(ctx)
 			startTime := time.Now()
 			orderCount := 0
+			orderTxCount := 0
+
 			// Height => PairId => Order
-			orderMap := map[int64]map[uint64]liquiditytypes.Order{}
+			orderMap := map[int64]map[uint64][]liquiditytypes.Order{}
+			// TODO: convert to mmOrder and indexing by mm address
+			mmOrderMap := map[int64]map[uint64][]liquiditytypes.MsgLimitOrder{}
+			//mmOrderCancelMap := map[int64]map[uint64]liquiditytypes.MsgLimitOrder{}
 
 			pairsReq := liquiditytypes.QueryPairsRequest{
 				Pagination: &query.PageRequest{
@@ -108,12 +124,15 @@ func NewBlockParserCmd() *cobra.Command {
 				return err
 			}
 
+			// iterate from startHeight to endHeight
 			for i := startHeight; i < endHeight; i++ {
 				if i%10000 == 0 {
-					fmt.Println(i, time.Now().Sub(startTime), orderCount)
+					fmt.Println(i, time.Now().Sub(startTime), orderCount, orderTxCount)
 				}
-				orderMap[i] = map[uint64]liquiditytypes.Order{}
+				orderMap[i] = map[uint64][]liquiditytypes.Order{}
+				mmOrderMap[i] = map[uint64][]liquiditytypes.MsgLimitOrder{}
 
+				// Query paris
 				pairsRes := app.Query(abci.RequestQuery{
 					Path:   "/crescent.liquidity.v1beta1.Query/Pairs",
 					Data:   pairsRewData,
@@ -122,8 +141,8 @@ func NewBlockParserCmd() *cobra.Command {
 				})
 				var pairsLive liquiditytypes.QueryPairsResponse
 				pairsLive.Unmarshal(pairsRes.Value)
-				//fmt.Println(pairsLive)
 				for _, pair := range pairsLive.Pairs {
+					// TODO: check not pruning height
 					//if i%333 == 0 {
 					//	fmt.Println(i, pair.Id, pair.LastOrderId, pair.LastPrice)
 					//}
@@ -137,6 +156,8 @@ func NewBlockParserCmd() *cobra.Command {
 					if err != nil {
 						return err
 					}
+
+					// Query Orders
 					res := app.Query(abci.RequestQuery{
 						Path:   "/crescent.liquidity.v1beta1.Query/Orders",
 						Data:   data,
@@ -147,8 +168,41 @@ func NewBlockParserCmd() *cobra.Command {
 					orders.Unmarshal(res.Value)
 					for _, order := range orders.Orders {
 						orderCount++
-						orderMap[i][pair.Id] = order
-						//fmt.Println(order.Id, order.Orderer, order.Amount, order.Price, i)
+						orderMap[i][pair.Id] = append(orderMap[i][pair.Id], order)
+					}
+				}
+
+				// iterate and parse txs of this block, ordered by txResult.Index 0 -> n
+				for _, tx := range blockStore.LoadBlock(i).Txs {
+					txResult, err := txi.Get(tx.Hash())
+					if err != nil {
+						return fmt.Errorf("get tx index: %w", err)
+					}
+
+					//// considered tx index ordering for cancel past mm order, already ordered
+					//fmt.Println(i, txResult.Index, hex.EncodeToString(tx.Hash()))
+
+					// TODO: filtering registered mm address
+
+					// pass if not succeeded tx
+					if txResult.Result.Code != 0 {
+						continue
+					}
+
+					sdkTx, err := txDecoder(txResult.Tx)
+					if err != nil {
+						return fmt.Errorf("decode tx: %w", err)
+					}
+
+					// indexing only targeted msg types
+					for _, msg := range sdkTx.GetMsgs() {
+						switch msg := msg.(type) {
+						// TODO: filter only MM order type MMOrder, MMOrderCancel
+						case *liquiditytypes.MsgLimitOrder:
+							orderTxCount++
+							mmOrderMap[i][msg.PairId] = append(mmOrderMap[i][msg.PairId], *msg)
+							//fmt.Println(i, msg.Orderer, msg.Price, txResult.Result.Code, hex.EncodeToString(tx.Hash()))
+						}
 					}
 				}
 			}
