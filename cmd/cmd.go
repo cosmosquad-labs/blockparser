@@ -13,11 +13,14 @@ import (
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	abci "github.com/tendermint/tendermint/abci/types"
 	"github.com/tendermint/tendermint/libs/log"
-	txkv "github.com/tendermint/tendermint/state/txindex/kv"
 	"github.com/tendermint/tendermint/store"
 	tmdb "github.com/tendermint/tm-db"
 
 	"github.com/crescent-network/crescent/app"
+)
+
+var (
+	RemnantThresholdTmp = sdk.MustNewDecFromStr("0.4")
 )
 
 func NewBlockParserCmd() *cobra.Command {
@@ -58,6 +61,7 @@ func NewBlockParserCmd() *cobra.Command {
 			//stateStore := state.NewStore(stateDB)
 			//txStore := kv.NewTxIndex(txDB)
 
+			fmt.Println("version :", "v0.1.0")
 			fmt.Println("Loaded : ", dir+"/data/")
 			fmt.Println("Input Start Height :", startHeight)
 			fmt.Println("Input End Height :", endHeight)
@@ -99,8 +103,10 @@ func NewBlockParserCmd() *cobra.Command {
 				return fmt.Errorf("open db: %w", err)
 			}
 			defer store.Close()
-			txi := txkv.NewTxIndex(store)
-			txDecoder := encCfg.TxConfig.TxDecoder()
+			// ============================ tx parsing logics ========================
+			//txi := txkv.NewTxIndex(store)
+			//txDecoder := encCfg.TxConfig.TxDecoder()
+			// ============================ tx parsing logics ========================
 
 			//ctx := app.BaseApp.NewContext(true, tmproto.Header{})
 			//pairs := app.LiquidityKeeper.GetAllPairs(ctx)
@@ -110,10 +116,15 @@ func NewBlockParserCmd() *cobra.Command {
 
 			// Height => PairId => Order
 			orderMap := map[int64]map[uint64][]liquiditytypes.Order{}
+			// pair => Address => height => orders
+			OrderMapByAddr := map[uint64]map[string]map[int64][]liquiditytypes.Order{}
+
 			// TODO: convert to mmOrder and indexing by mm address
 			mmOrderMap := map[int64]map[uint64][]liquiditytypes.MsgLimitOrder{}
-			// TODO: indexing by address
 			//mmOrderCancelMap := map[int64]map[uint64]liquiditytypes.MsgLimitOrder{}
+
+			// TODO: GET params, considering update height
+			//app.MarketMakerKeeper.GetParams(ctx)
 
 			pairsReq := liquiditytypes.QueryPairsRequest{
 				Pagination: &query.PageRequest{
@@ -132,6 +143,7 @@ func NewBlockParserCmd() *cobra.Command {
 				}
 				orderMap[i] = map[uint64][]liquiditytypes.Order{}
 				mmOrderMap[i] = map[uint64][]liquiditytypes.MsgLimitOrder{}
+				// Address -> pair -> height -> orders
 
 				// Query paris
 				pairsRes := app.Query(abci.RequestQuery{
@@ -168,43 +180,127 @@ func NewBlockParserCmd() *cobra.Command {
 					for _, order := range orders.Orders {
 						orderCount++
 						orderMap[i][pair.Id] = append(orderMap[i][pair.Id], order)
+
+						// indexing order.PairId, address
+						// TODO: filtering only mm address, mm order
+						if _, ok := OrderMapByAddr[pair.Id]; !ok {
+							OrderMapByAddr[pair.Id] = map[string]map[int64][]liquiditytypes.Order{}
+						}
+						if _, ok := OrderMapByAddr[pair.Id][order.Orderer]; !ok {
+							OrderMapByAddr[pair.Id][order.Orderer] = map[int64][]liquiditytypes.Order{}
+						}
+						OrderMapByAddr[pair.Id][order.Orderer][i] = append(OrderMapByAddr[pair.Id][order.Orderer][i], order)
 					}
 				}
 
-				// get block result
-				block := blockStore.LoadBlock(i)
+				// ============================ tx parsing logics ========================
+				//// get block result
+				//block := blockStore.LoadBlock(i)
+				//
+				//// iterate and parse txs of this block, ordered by txResult.Index 0 -> n
+				//for _, tx := range block.Txs {
+				//	txResult, err := txi.Get(tx.Hash())
+				//	if err != nil {
+				//		return fmt.Errorf("get tx index: %w", err)
+				//	}
+				//
+				//	// pass if not succeeded tx
+				//	if txResult.Result.Code != 0 {
+				//		continue
+				//	}
+				//
+				//	sdkTx, err := txDecoder(txResult.Tx)
+				//	if err != nil {
+				//		return fmt.Errorf("decode tx: %w", err)
+				//	}
+				//
+				//	// indexing only targeted msg types
+				//	for _, msg := range sdkTx.GetMsgs() {
+				//		switch msg := msg.(type) {
+				//		// TODO: filter only MM order type MMOrder, MMOrderCancel
+				//		case *liquiditytypes.MsgLimitOrder:
+				//			orderTxCount++
+				//			mmOrderMap[i][msg.PairId] = append(mmOrderMap[i][msg.PairId], *msg)
+				//			//fmt.Println(i, msg.Orderer, msg.Price, txResult.Result.Code, hex.EncodeToString(tx.Hash()))
+				//		}
+				//	}
+				//}
+				// ============================ tx parsing logics ========================
+			}
+			//jsonString, err := json.Marshal(OrderMapByAddr)
+			//fmt.Println(string(jsonString))
+			fmt.Println("finish", orderCount)
+			// TODO: analysis logic
 
-				// iterate and parse txs of this block, ordered by txResult.Index 0 -> n
-				for _, tx := range block.Txs {
-					txResult, err := txi.Get(tx.Hash())
-					if err != nil {
-						return fmt.Errorf("get tx index: %w", err)
-					}
-
-					// pass if not succeeded tx
-					if txResult.Result.Code != 0 {
-						continue
-					}
-
-					sdkTx, err := txDecoder(txResult.Tx)
-					if err != nil {
-						return fmt.Errorf("decode tx: %w", err)
-					}
-
-					// indexing only targeted msg types
-					for _, msg := range sdkTx.GetMsgs() {
-						switch msg := msg.(type) {
-						// TODO: filter only MM order type MMOrder, MMOrderCancel
-						case *liquiditytypes.MsgLimitOrder:
-							orderTxCount++
-							mmOrderMap[i][msg.PairId] = append(mmOrderMap[i][msg.PairId], *msg)
-							//fmt.Println(i, msg.Orderer, msg.Price, txResult.Result.Code, hex.EncodeToString(tx.Hash()))
+			for _, addrMap := range OrderMapByAddr {
+				for _, heightMap := range addrMap {
+					for _, orders := range heightMap {
+						if len(orders) > 1 {
+							fmt.Println("=====================")
+							fmt.Printf("%#v\n", orders)
 						}
 					}
 				}
 			}
 			return nil
+
 		},
 	}
 	return cmd
 }
+
+// TODO: order checking status, expired as function on this?
+// TODO: Calc Spread from order list of the height of a pair
+// TODO: Distance, midPrice, both side, min
+// testcode with input orderlist
+// GET C_mt, summation of C_mt for share
+// Spread, Distance, Width
+// SET params as json file
+
+type Result struct {
+	MidPrice sdk.Dec
+	Spread   sdk.Dec
+	//AdjSpread   sdk.Dec
+	AskWidth sdk.Dec
+	//AskRmWidth sdk.Dec
+	BidWidth sdk.Dec
+	//BidRmWidth sdk.Dec
+	AskQuantity sdk.Int
+	BidQuantity sdk.Int
+
+	AskMinPrice sdk.Dec
+	AskMaxPrice sdk.Dec
+	BidMinPrice sdk.Dec
+	BidMaxPrice sdk.Dec
+}
+
+//func GetResult(orders []liquiditytypes.Order) (r Result) {
+//	for _, order := range orders {
+//		// TODO: need to verify
+//		if !order.RemainingOfferCoin.Amount.ToDec().Quo(order.OfferCoin.Amount.ToDec()).GTE(RemnantThresholdTmp) {
+//			continue
+//		}
+//		if order.Direction == liquiditytypes.OrderDirectionBuy { // BID
+//			if order.Price.GTE(r.BidMaxPrice) {
+//				r.BidMaxPrice = order.Price
+//			}
+//			if order.Price.LTE(r.BidMinPrice) {
+//				r.BidMinPrice = order.Price
+//			}
+//		} else if order.Direction == liquiditytypes.OrderDirectionSell { // ASK
+//			if order.Price.GTE(r.AskMaxPrice) {
+//				r.AskMaxPrice = order.Price
+//			}
+//			if order.Price.LTE(r.AskMinPrice) {
+//				r.AskMinPrice = order.Price
+//			}
+//		}
+//
+//	}
+//	return
+//	// TODO: checking order tick cap validity
+//}
+
+//func GetMidPrice(orders []liquiditytypes.Order) sdk.Dec {
+//
+//}
