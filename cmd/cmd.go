@@ -112,6 +112,7 @@ func NewBlockParserCmd() *cobra.Command {
 			orderMap := map[int64]map[uint64][]liquiditytypes.Order{}
 			// TODO: convert to mmOrder and indexing by mm address
 			mmOrderMap := map[int64]map[uint64][]liquiditytypes.MsgLimitOrder{}
+			// TODO: indexing by address
 			//mmOrderCancelMap := map[int64]map[uint64]liquiditytypes.MsgLimitOrder{}
 
 			pairsReq := liquiditytypes.QueryPairsRequest{
@@ -142,10 +143,8 @@ func NewBlockParserCmd() *cobra.Command {
 				var pairsLive liquiditytypes.QueryPairsResponse
 				pairsLive.Unmarshal(pairsRes.Value)
 				for _, pair := range pairsLive.Pairs {
-					// TODO: check not pruning height
-					//if i%333 == 0 {
-					//	fmt.Println(i, pair.Id, pair.LastOrderId, pair.LastPrice)
-					//}
+					// TODO: check pruning
+
 					a := liquiditytypes.QueryOrdersRequest{
 						PairId: pair.Id,
 						Pagination: &query.PageRequest{
@@ -172,17 +171,15 @@ func NewBlockParserCmd() *cobra.Command {
 					}
 				}
 
+				// get block result
+				block := blockStore.LoadBlock(i)
+
 				// iterate and parse txs of this block, ordered by txResult.Index 0 -> n
-				for _, tx := range blockStore.LoadBlock(i).Txs {
+				for _, tx := range block.Txs {
 					txResult, err := txi.Get(tx.Hash())
 					if err != nil {
 						return fmt.Errorf("get tx index: %w", err)
 					}
-
-					//// considered tx index ordering for cancel past mm order, already ordered
-					//fmt.Println(i, txResult.Index, hex.EncodeToString(tx.Hash()))
-
-					// TODO: filtering registered mm address
 
 					// pass if not succeeded tx
 					if txResult.Result.Code != 0 {
