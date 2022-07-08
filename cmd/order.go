@@ -37,6 +37,11 @@ type Result struct {
 	TotalCount         int
 }
 
+type Params struct {
+	RemnantThreshold sdk.Dec
+	AskQ1            sdk.Int
+}
+
 func (r Result) String() (str string) {
 	s := reflect.ValueOf(&r).Elem()
 	typeOfT := s.Type()
@@ -50,7 +55,7 @@ func (r Result) String() (str string) {
 	return
 }
 
-func GetResult(orders []liquiditytypes.Order) (r Result) {
+func GetResult(orders []liquiditytypes.Order, params Params) (r Result) {
 	r = Result{
 		MidPrice:    sdk.ZeroDec(),
 		AskWidth:    sdk.ZeroDec(),
@@ -80,14 +85,14 @@ func GetResult(orders []liquiditytypes.Order) (r Result) {
 			r.InvalidStatusCount += 1
 			continue
 		}
-		// skip orders which is not over RemnantThreshold
-		if order.RemainingOfferCoin.Amount.ToDec().Quo(order.OfferCoin.Amount.ToDec()).LTE(RemnantThresholdTmp) {
+		// skip orders which is not over RemnantThreshold, and over $500 from param
+		if order.OpenAmount.ToDec().Quo(order.Amount.ToDec()).LTE(params.RemnantThreshold) && order.OpenAmount.LT(params.AskQ1) {
 			r.RemCount += 1
 			continue
 		}
 		if order.Direction == liquiditytypes.OrderDirectionBuy { // BID
 			r.BidCount += 1
-			r.BidQuantity = r.BidQuantity.Add(order.RemainingOfferCoin.Amount)
+			r.BidQuantity = r.BidQuantity.Add(order.OpenAmount)
 			if order.Price.GTE(r.BidMaxPrice) {
 				r.BidMaxPrice = order.Price
 			}
@@ -96,7 +101,7 @@ func GetResult(orders []liquiditytypes.Order) (r Result) {
 			}
 		} else if order.Direction == liquiditytypes.OrderDirectionSell { // ASK
 			r.AskCount += 1
-			r.AskQuantity = r.AskQuantity.Add(order.RemainingOfferCoin.Amount)
+			r.AskQuantity = r.AskQuantity.Add(order.OpenAmount)
 			if order.Price.GTE(r.AskMaxPrice) {
 				r.AskMaxPrice = order.Price
 			}

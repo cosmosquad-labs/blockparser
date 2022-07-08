@@ -19,10 +19,6 @@ import (
 	"github.com/crescent-network/crescent/app"
 )
 
-var (
-	RemnantThresholdTmp = sdk.MustNewDecFromStr("0.4")
-)
-
 func NewBlockParserCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:  "blockparser [chain-dir] [start-height] [end-height]",
