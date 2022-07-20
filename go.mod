@@ -8,7 +8,7 @@ require (
 	github.com/spf13/cobra v1.4.0
 	github.com/stretchr/testify v1.7.1
 	github.com/syndtr/goleveldb v1.0.1-0.20200815110645-5c35d600f0ca
-	github.com/tendermint/tendermint v0.34.19
+	github.com/tendermint/tendermint v0.34.15
 	github.com/tendermint/tm-db v0.6.7
 )
 
@@ -125,5 +125,5 @@ replace (
 	github.com/cosmos/cosmos-sdk => github.com/crescent-network/cosmos-sdk v1.0.2-sdk-0.44.5
 	github.com/gogo/protobuf => github.com/regen-network/protobuf v1.3.3-alpha.regen.1
 	github.com/keybase/go-keychain => github.com/99designs/go-keychain v0.0.0-20191008050251-8e49817e8af4
-	github.com/tendermint/tm-db => github.com/cosmosquad-labs/tm-db v0.6.7-read
+	github.com/tendermint/tm-db => github.com/cosmosquad-labs/tm-db v0.6.7-read-rocksdb
 )
