@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"time"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/query"
 	crecmd "github.com/crescent-network/crescent/cmd/crescentd/cmd"
 	liquiditytypes "github.com/crescent-network/crescent/x/liquidity/types"
@@ -44,19 +43,22 @@ func NewBlockParserCmd() *cobra.Command {
 }
 
 func Main(dir string, startHeight, endHeight int64) error {
-	blockDB, err := sdk.NewLevelDB("data/blockstore", dir)
+	//blockDB, err := sdk.NewLevelDB("data/blockstore", dir)
+	blockDB, err := tmdb.NewDB("data/blockstore", "rocksdb", dir)
 	if err != nil {
 		panic(err)
 	}
 	defer blockDB.Close()
 
-	stateDB, err := sdk.NewLevelDB("data/state", dir)
+	//stateDB, err := sdk.NewLevelDB("data/state", dir)
+	stateDB, err := tmdb.NewDB("data/state", "rocksdb", dir)
 	if err != nil {
 		panic(err)
 	}
 	defer stateDB.Close()
 
-	db, err := sdk.NewLevelDB("data/application", dir)
+	//db, err := sdk.NewLevelDB("data/application", dir)
+	db, err := tmdb.NewDB("data/application", "rocksdb", dir)
 	if err != nil {
 		panic(err)
 	}
