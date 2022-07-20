@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"reflect"
+	"time"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	liquiditytypes "github.com/crescent-network/crescent/x/liquidity/types"
@@ -40,6 +41,13 @@ type Result struct {
 type Params struct {
 	RemnantThreshold sdk.Dec
 	AskQ1            sdk.Int
+}
+
+type OrderData struct {
+	Order     liquiditytypes.Order
+	Pools     []liquiditytypes.PoolResponse
+	Height    int64
+	BlockTime time.Time
 }
 
 func (r Result) String() (str string) {

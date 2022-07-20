@@ -1,6 +1,7 @@
 package cmd_test
 
 import (
+	"fmt"
 	"testing"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -190,6 +191,7 @@ func (suite *OrderTestSuite) TestGetResult() {
 			suite.Require().EqualValues(result.RemCount, tc.RemCount)
 			suite.Require().EqualValues(result.InvalidStatusCount, tc.InvalidStatusCount)
 			suite.Require().EqualValues(result.TotalCount, tc.TotalCount)
+			fmt.Println(result)
 		})
 	}
 }
