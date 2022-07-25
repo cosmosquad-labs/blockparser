@@ -95,7 +95,7 @@ func Main(dir string, startHeight, endHeight int64) error {
 	// Init app
 	encCfg := app.MakeEncodingConfig()
 	app := app.NewApp(log.NewNopLogger(), db, nil, false, map[int64]bool{}, "localnet", 0, encCfg, app.EmptyAppOptions{})
-	if err := app.LoadHeight(startHeight); err != nil {
+	if err := app.LoadHeight(endHeight); err != nil {
 		panic(err)
 	}
 
@@ -244,7 +244,7 @@ func Main(dir string, startHeight, endHeight int64) error {
 func QueryPairs(app app.App, height int64) (poolsRes []liquiditytypes.Pair, err error) {
 	pairsReq := liquiditytypes.QueryPairsRequest{
 		Pagination: &query.PageRequest{
-			Limit: 1000000,
+			Limit: 100,
 		},
 	}
 
