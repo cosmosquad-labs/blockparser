@@ -135,16 +135,6 @@ func Main(dir string, startHeight, endHeight int64) error {
 	// TODO: GET params, considering update height
 	//app.MarketMakerKeeper.GetParams(ctx)
 
-	pairsReq := liquiditytypes.QueryPairsRequest{
-		Pagination: &query.PageRequest{
-			Limit: 1000000,
-		},
-	}
-	pairsRewData, err := pairsReq.Marshal()
-	if err != nil {
-		return err
-	}
-
 	// iterate from startHeight to endHeight
 	for i := startHeight; i < endHeight; i++ {
 		block = blockStore.LoadBlock(int64(i))
@@ -156,15 +146,11 @@ func Main(dir string, startHeight, endHeight int64) error {
 		// Address -> pair -> height -> orders
 
 		// Query paris
-		pairsRes := app.Query(abci.RequestQuery{
-			Path:   "/crescent.liquidity.v1beta1.Query/Pairs",
-			Data:   pairsRewData,
-			Height: i,
-			Prove:  false,
-		})
-		var pairsLive liquiditytypes.QueryPairsResponse
-		pairsLive.Unmarshal(pairsRes.Value)
-		for _, pair := range pairsLive.Pairs {
+		pairs, err := QueryPairs(*app, i)
+		if err != nil {
+			return err
+		}
+		for _, pair := range pairs {
 			// TODO: check pruning
 
 			orders, err := QueryOrders(*app, pair.Id, i)
@@ -249,6 +235,26 @@ func Main(dir string, startHeight, endHeight int64) error {
 	//	}
 	//}
 	return nil
+}
+
+var pairsReq = liquiditytypes.QueryPairsRequest{
+	Pagination: &query.PageRequest{
+		Limit: 1000000,
+	},
+}
+
+var pairsRawData, err = pairsReq.Marshal()
+
+func QueryPairs(app app.App, height int64) (poolsRes []liquiditytypes.Pair, err error) {
+	pairsRes := app.Query(abci.RequestQuery{
+		Path:   "/crescent.liquidity.v1beta1.Query/Pairs",
+		Data:   pairsRawData,
+		Height: height,
+		Prove:  false,
+	})
+	var pairsLive liquiditytypes.QueryPairsResponse
+	pairsLive.Unmarshal(pairsRes.Value)
+	return pairsLive.Pairs, nil
 }
 
 func QueryPools(app app.App, pairId uint64, height int64) (poolsRes []liquiditytypes.PoolResponse, err error) {
