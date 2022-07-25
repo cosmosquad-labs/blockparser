@@ -137,7 +137,7 @@ func Main(dir string, startHeight, endHeight int64) error {
 
 	// iterate from startHeight to endHeight
 	for i := startHeight; i < endHeight; i++ {
-		block = blockStore.LoadBlock(int64(i))
+		block = blockStore.LoadBlock(i)
 		if i%10000 == 0 {
 			fmt.Println(i, time.Now().Sub(startTime), orderCount, orderTxCount)
 		}
@@ -150,10 +150,13 @@ func Main(dir string, startHeight, endHeight int64) error {
 		if err != nil {
 			return err
 		}
+		fmt.Println("-------------------")
+		fmt.Println("pair num: ", len(pairs), i)
 		for _, pair := range pairs {
 			// TODO: check pruning
 
 			orders, err := QueryOrders(*app, pair.Id, i)
+			fmt.Println("order num: ", len(orders), i)
 			if err != nil {
 				return err
 			}
@@ -163,6 +166,7 @@ func Main(dir string, startHeight, endHeight int64) error {
 				if err != nil {
 					return err
 				}
+				fmt.Println("pools num: ", len(pools), i)
 				OrderDataList = append(OrderDataList, OrderData{
 					Order:     order,
 					Pools:     pools,
@@ -237,21 +241,27 @@ func Main(dir string, startHeight, endHeight int64) error {
 	return nil
 }
 
-var pairsReq = liquiditytypes.QueryPairsRequest{
-	Pagination: &query.PageRequest{
-		Limit: 1000000,
-	},
-}
-
-var pairsRawData, err = pairsReq.Marshal()
-
 func QueryPairs(app app.App, height int64) (poolsRes []liquiditytypes.Pair, err error) {
+	pairsReq := liquiditytypes.QueryPairsRequest{
+		Pagination: &query.PageRequest{
+			Limit: 1000000,
+		},
+	}
+
+	pairsRawData, err := pairsReq.Marshal()
+	if err != nil {
+		return nil, err
+	}
+
 	pairsRes := app.Query(abci.RequestQuery{
 		Path:   "/crescent.liquidity.v1beta1.Query/Pairs",
 		Data:   pairsRawData,
 		Height: height,
 		Prove:  false,
 	})
+	if pairsRes.Height != height {
+		return nil, fmt.Errorf("height error %d, %d", pairsRes.Height, height)
+	}
 	var pairsLive liquiditytypes.QueryPairsResponse
 	pairsLive.Unmarshal(pairsRes.Value)
 	return pairsLive.Pairs, nil
@@ -277,6 +287,9 @@ func QueryPools(app app.App, pairId uint64, height int64) (poolsRes []liquidityt
 		Height: height,
 		Prove:  false,
 	})
+	if resPool.Height != height {
+		return nil, fmt.Errorf("height error %d, %d", resPool.Height, height)
+	}
 	var pools liquiditytypes.QueryPoolsResponse
 	pools.Unmarshal(resPool.Value)
 	return pools.Pools, nil
@@ -301,6 +314,9 @@ func QueryOrders(app app.App, pairId uint64, height int64) (poolsRes []liquidity
 		Height: height,
 		Prove:  false,
 	})
+	if res.Height != height {
+		return nil, fmt.Errorf("height error %d, %d", res.Height, height)
+	}
 	var orders liquiditytypes.QueryOrdersResponse
 	orders.Unmarshal(res.Value)
 	return orders.Orders, nil
