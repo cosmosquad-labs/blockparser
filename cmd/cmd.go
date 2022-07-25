@@ -95,6 +95,7 @@ func Main(dir string, startHeight, endHeight int64) error {
 	// Init app
 	encCfg := app.MakeEncodingConfig()
 	app := app.NewApp(log.NewNopLogger(), db, nil, false, map[int64]bool{}, "localnet", 0, encCfg, app.EmptyAppOptions{})
+	// should be load last height from v2 (sdk 0.45.*)
 	if err := app.LoadHeight(endHeight); err != nil {
 		panic(err)
 	}
@@ -150,13 +151,10 @@ func Main(dir string, startHeight, endHeight int64) error {
 		if err != nil {
 			return err
 		}
-		fmt.Println("-------------------")
-		fmt.Println("pair num: ", len(pairs), i)
 		for _, pair := range pairs {
 			// TODO: check pruning
 
 			orders, err := QueryOrders(*app, pair.Id, i)
-			fmt.Println("order num: ", len(orders), i)
 			if err != nil {
 				return err
 			}
@@ -166,7 +164,6 @@ func Main(dir string, startHeight, endHeight int64) error {
 				if err != nil {
 					return err
 				}
-				fmt.Println("pools num: ", len(pools), i)
 				OrderDataList = append(OrderDataList, OrderData{
 					Order:     order,
 					Pools:     pools,
