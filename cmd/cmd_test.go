@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	crecmd "github.com/crescent-network/crescent/cmd/crescentd/cmd"
+	crecmd "github.com/crescent-network/crescent/v2/cmd/crescentd/cmd"
 
 	"github.com/cosmosquad-labs/blockparser/cmd"
 )

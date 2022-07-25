@@ -8,8 +8,8 @@ import (
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/query"
-	crecmd "github.com/crescent-network/crescent/cmd/crescentd/cmd"
-	liquiditytypes "github.com/crescent-network/crescent/x/liquidity/types"
+	crecmd "github.com/crescent-network/crescent/v2/cmd/crescentd/cmd"
+	liquiditytypes "github.com/crescent-network/crescent/v2/x/liquidity/types"
 
 	"github.com/spf13/cobra"
 	"github.com/syndtr/goleveldb/leveldb/opt"
@@ -18,7 +18,7 @@ import (
 	"github.com/tendermint/tendermint/store"
 	tmdb "github.com/tendermint/tm-db"
 
-	"github.com/crescent-network/crescent/app"
+	"github.com/crescent-network/crescent/v2/app"
 )
 
 func NewBlockParserCmd() *cobra.Command {

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	liquiditytypes "github.com/crescent-network/crescent/x/liquidity/types"
+	liquiditytypes "github.com/crescent-network/crescent/v2/x/liquidity/types"
 )
 
 // TODO: order checking status, expired as function on this?
