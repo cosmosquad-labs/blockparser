@@ -260,7 +260,7 @@ func QueryPairs(app app.App, height int64) (poolsRes []liquiditytypes.Pair, err 
 		Prove:  false,
 	})
 	if pairsRes.Height != height {
-		return nil, fmt.Errorf("height error %d, %d", pairsRes.Height, height)
+		fmt.Println(fmt.Errorf("pairs height error %d, %d", pairsRes.Height, height))
 	}
 	var pairsLive liquiditytypes.QueryPairsResponse
 	pairsLive.Unmarshal(pairsRes.Value)
@@ -288,7 +288,7 @@ func QueryPools(app app.App, pairId uint64, height int64) (poolsRes []liquidityt
 		Prove:  false,
 	})
 	if resPool.Height != height {
-		return nil, fmt.Errorf("height error %d, %d", resPool.Height, height)
+		fmt.Println(fmt.Errorf("pools height error %d, %d", resPool.Height, height))
 	}
 	var pools liquiditytypes.QueryPoolsResponse
 	pools.Unmarshal(resPool.Value)
@@ -315,7 +315,7 @@ func QueryOrders(app app.App, pairId uint64, height int64) (poolsRes []liquidity
 		Prove:  false,
 	})
 	if res.Height != height {
-		return nil, fmt.Errorf("height error %d, %d", res.Height, height)
+		fmt.Println(fmt.Errorf("orders height error %d, %d", res.Height, height))
 	}
 	var orders liquiditytypes.QueryOrdersResponse
 	orders.Unmarshal(res.Value)
