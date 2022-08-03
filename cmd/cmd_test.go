@@ -28,15 +28,17 @@ func (suite *CmdTestSuite) TestMain2() {
 		dir         string
 		startHeight int64
 		endHeight   int64
+		address     string
 	}{
 		{
 			dir:         "/Users/dongsamb/.crescent",
-			startHeight: 478559,
-			endHeight:   478566,
+			startHeight: 1,
+			endHeight:   2,
+			address:     "cre1tcgjtr03xqzjjwxslrpfaajvsk7nclv6fkgtxt",
 		},
 	} {
 		suite.Run(tc.dir, func() {
-			res := cmd.Main(tc.dir, tc.startHeight, tc.endHeight)
+			res := cmd.Main(tc.dir, tc.startHeight, tc.endHeight, tc.address)
 			fmt.Println(res)
 		})
 	}
