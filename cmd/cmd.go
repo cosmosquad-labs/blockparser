@@ -8,6 +8,9 @@ import (
 	"strconv"
 	"time"
 
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/syndtr/goleveldb/leveldb"
+	"github.com/syndtr/goleveldb/leveldb/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 
@@ -22,7 +25,80 @@ import (
 
 	"github.com/crescent-network/crescent/v2/app"
 	abci "github.com/tendermint/tendermint/abci/types"
+
+	"github.com/cosmosquad-labs/blockparser/api/server"
 )
+
+type Context struct {
+	LastHeight int64
+	SyncStatus bool // TODO: delete?
+
+	LiquidityClient liquiditytypes.QueryClient
+	// TODO: bank, etc
+
+	RpcWebsocketClient *rpchttp.HTTP
+	WebsocketCtx       context.Context
+
+	SyncDB *leveldb.DB
+
+	Config
+}
+
+var SyncPrefix = []byte{0x01}
+
+func GetSyncKey(height int64) []byte {
+	return append(SyncPrefix, sdk.Uint64ToBigEndian(uint64(height))...)
+}
+
+func ParseSyncKey(key []byte) int64 {
+	return int64(sdk.BigEndianToUint64(key[1:]))
+}
+
+func (ctx Context) SyncLog(height int64) error {
+	return ctx.SyncDB.Put(GetSyncKey(height), []byte(time.Now().UTC().String()), nil)
+}
+
+func (ctx Context) SyncLogPrint() error {
+	iter := ctx.SyncDB.NewIterator(util.BytesPrefix(SyncPrefix), nil)
+	for iter.Next() {
+		// Use key/value.
+		fmt.Println(ParseSyncKey(iter.Key()), string(iter.Value()))
+	}
+	iter.Release()
+	return iter.Error()
+}
+
+type Config struct {
+	AccList            []string
+	PairList           []uint64 // if empty, all pairs
+	StartHeight        int64
+	OrderbookKeepBlock int // zero == keep all?
+	AllOrdersKeepBlock int
+	PairPoolKeepBlock  int
+	BalanceKeepBlock   int
+	GrpcEndpoint       string
+	RpcEndpoint        string
+	Dir                string
+
+	// TODO: orderbook argument
+}
+
+var config = Config{
+	AccList: []string{
+		"cre1tcgjtr03xqzjjwxslrpfaajvsk7nclv6fkgtxt",
+		"cre1xzmgjjlz7kacgkpxk5gn6lqa0dvavg8rjgdvcz",
+	},
+	PairList:           []uint64{},
+	StartHeight:        0,
+	OrderbookKeepBlock: 0,
+	AllOrdersKeepBlock: 0,
+	PairPoolKeepBlock:  0,
+	BalanceKeepBlock:   0,
+	GrpcEndpoint:       "127.0.0.1:9090",
+	RpcEndpoint:        "tcp://127.0.0.1:26657",
+	Dir:                "", // TODO: home
+	// TODO: GRPC, RPC endpoint
+}
 
 func NewBlockParserCmd() *cobra.Command {
 	crecmd.GetConfig()
@@ -41,47 +117,31 @@ func NewBlockParserCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("parse end-Height: %w", err)
 			}
-			return Main(dir, startHeight, endHeight, addr)
+			return Main(dir, startHeight, endHeight, addr, config)
 		},
 	}
 	return cmd
 }
 
-func Main(dir string, startHeight, endHeight int64, addrInput string) error {
+func Main(dir string, startHeight, endHeight int64, addrInput string, config Config) error {
 
-	//// TODO: start after all synced
-	//// ======================================================================= websocket
-	client, err := rpchttp.New("tcp://127.0.0.1:26657", "/websocket")
+	go server.Serv()
+
+	var ctx Context
+	ctx.Config = config
+
+	// ================= set db ==============================
+	syncdb, err := leveldb.OpenFile(ctx.Config.Dir+"mmapi/sync", nil)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
+	defer syncdb.Close()
+	ctx.SyncDB = syncdb
 
-	err = client.Start()
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer client.Stop()
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-	defer cancel()
-	query := "tm.event = 'NewBlock'"
-	txs, err := client.Subscribe(ctx, "test-client", query)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	for e := range txs {
-		switch data := e.Data.(type) {
-		case ttypes.EventDataNewBlock:
-			fmt.Printf("Block %s - Height: %d \n", hex.EncodeToString(data.Block.Hash()), data.Block.Height)
-			break
-		}
-	}
-	//// ======================================================================= websocket
-
-	// Create a connection to the gRPC server.
+	// ================================================= Create a connection to the gRPC server.
 	grpcConn, err := grpc.Dial(
-		"127.0.0.1:9090",    // your gRPC server address.
-		grpc.WithInsecure(), // The Cosmos SDK doesn't support any transport security mechanism.
+		ctx.Config.GrpcEndpoint, // your gRPC server address.
+		grpc.WithInsecure(),     // The Cosmos SDK doesn't support any transport security mechanism.
 		// This instantiates a general gRPC codec which handles proto bytes. We pass in a nil interface registry
 		// if the request/response types contain interface instead of 'nil' you should pass the application specific codec.
 		//grpc.WithDefaultCallOptions(grpc.ForceCodec(codec.NewProtoCodec(nil).GRPCCodec())),
@@ -91,7 +151,74 @@ func Main(dir string, startHeight, endHeight int64, addrInput string) error {
 	}
 	defer grpcConn.Close()
 
-	liquidityClient := liquiditytypes.NewQueryClient(grpcConn)
+	ctx.LiquidityClient = liquiditytypes.NewQueryClient(grpcConn)
+	// =========================================================================================
+
+	//// TODO: start after all synced
+	// TODO: go routine
+	//// ======================================================================= websocket
+	wc, err := rpchttp.New(ctx.Config.RpcEndpoint, "/websocket")
+	if err != nil {
+		log.Fatal(err)
+	}
+	ctx.RpcWebsocketClient = wc
+
+	err = ctx.RpcWebsocketClient.Start()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer ctx.RpcWebsocketClient.Stop()
+	wcCtx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+	ctx.WebsocketCtx = wcCtx
+
+	query := "tm.event = 'NewBlock'"
+	txs, err := ctx.RpcWebsocketClient.Subscribe(ctx.WebsocketCtx, "test-wc", query)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	go func() {
+		for e := range txs {
+			switch data := e.Data.(type) {
+			case ttypes.EventDataNewBlock:
+				fmt.Printf("Block %s - Height: %d \n", hex.EncodeToString(data.Block.Hash()), data.Block.Height)
+				// TODO: trigger for data sync
+				for _, addr := range ctx.Config.AccList {
+					orders, err := QueryOrdersByOrdererGRPC(ctx.LiquidityClient, addr, data.Block.Height)
+					if err != nil {
+						fmt.Println(err)
+						continue
+					}
+					if len(orders) != 0 {
+						fmt.Println(data.Block.Height, len(orders), orders)
+					}
+				}
+
+				err := ctx.SyncLog(data.Block.Height)
+				if err != nil {
+					fmt.Println(err)
+				}
+				err = ctx.SyncLogPrint()
+				if err != nil {
+					fmt.Println(err)
+				}
+
+				break
+			}
+		}
+	}()
+
+	//// ======================================================================= websocket
+
+	//wc.ABCIQuery()
+	status, err := ctx.RpcWebsocketClient.Status(ctx.WebsocketCtx)
+	if err != nil {
+		return err
+	}
+	fmt.Println(status.SyncInfo)
+
+	////==================== abci query
 
 	fmt.Println("version :", "v0.1.0")
 	fmt.Println("Loaded : ", dir+"/data/")
@@ -135,7 +262,7 @@ func Main(dir string, startHeight, endHeight int64, addrInput string) error {
 
 	// iterate from startHeight to endHeight
 	for i := startHeight; i < endHeight; i++ {
-		_, err := QueryParamsGRPC(liquidityClient, i)
+		_, err := QueryParamsGRPC(ctx.LiquidityClient, i)
 		if err != nil {
 			//fmt.Println("prunned height", i)
 			continue
@@ -149,12 +276,12 @@ func Main(dir string, startHeight, endHeight int64, addrInput string) error {
 		// Address -> pair -> height -> orders
 
 		// Query paris
-		//pairs, err := QueryPairsGRPC(liquidityClient, i)
+		//pairs, err := QueryPairsGRPC(ctx.liquidityClient, i)
 		//if err != nil {
 		//	return err
 		//}
 		//for _, pair := range pairs {
-		orders, err := QueryOrdersByOrdererGRPC(liquidityClient, addrInput, i)
+		orders, err := QueryOrdersByOrdererGRPC(ctx.LiquidityClient, addrInput, i)
 		if err != nil {
 			return err
 		}
@@ -221,9 +348,6 @@ func QueryPairs(app app.App, height int64) (poolsRes []liquiditytypes.Pair, err 
 		Height: height,
 		Prove:  false,
 	})
-	if pairsRes.Height != height {
-		fmt.Println(fmt.Errorf("pairs height error %d, %d", pairsRes.Height, height))
-	}
 	var pairsLive liquiditytypes.QueryPairsResponse
 	pairsLive.Unmarshal(pairsRes.Value)
 	return pairsLive.Pairs, nil
@@ -247,15 +371,6 @@ func QueryPairsGRPC(cli liquiditytypes.QueryClient, height int64) (poolsRes []li
 		return nil, err
 	}
 
-	blockHeight := header.Get(grpctypes.GRPCBlockHeightHeader)
-	resHeight, err := strconv.ParseInt(blockHeight[0], 10, 64)
-	if err != nil {
-		return nil, err
-	}
-	if resHeight != height {
-		fmt.Println(fmt.Errorf("pairs height error %d, %d", resHeight, height))
-	}
-
 	return pairs.Pairs, nil
 }
 
@@ -272,16 +387,6 @@ func QueryParamsGRPC(cli liquiditytypes.QueryClient, height int64) (resParams *l
 	if err != nil {
 		return nil, err
 	}
-
-	//blockHeight := header.Get(grpctypes.GRPCBlockHeightHeader)
-	//resHeight, err := strconv.ParseInt(blockHeight[0], 10, 64)
-	//if err != nil {
-	//	return nil, err
-	//}
-	//
-	//if resHeight != height {
-	//	fmt.Println(fmt.Errorf("pairs height error %d, %d", resHeight, height))
-	//}
 
 	return res, nil
 }
@@ -305,16 +410,27 @@ func QueryOrdersByOrdererGRPC(cli liquiditytypes.QueryClient, orderer string, he
 		return nil, err
 	}
 
-	//blockHeight := header.Get(grpctypes.GRPCBlockHeightHeader)
-	//resHeight, err := strconv.ParseInt(blockHeight[0], 10, 64)
-	//if err != nil {
-	//	return nil, err
-	//}
+	return res.Orders, nil
+}
 
-	//// TODO: didn't works
-	//if resHeight != height {
-	//	fmt.Println(fmt.Errorf("pairs height error %d, %d", resHeight, height))
-	//}
+func QueryOrdersGRPC(cli liquiditytypes.QueryClient, pairId uint64, height int64) (poolsRes []liquiditytypes.Order, err error) {
+	req := liquiditytypes.QueryOrdersRequest{
+		PairId: pairId,
+		Pagination: &query.PageRequest{
+			Limit: 1000,
+		},
+	}
+
+	var header metadata.MD
+
+	res, err := cli.Orders(
+		metadata.AppendToOutgoingContext(context.Background(), grpctypes.GRPCBlockHeightHeader, strconv.FormatInt(height, 10)),
+		&req,
+		grpc.Header(&header),
+	)
+	if err != nil {
+		return nil, err
+	}
 
 	return res.Orders, nil
 }
@@ -338,15 +454,6 @@ func QueryOrdersByOrdererByPairGRPC(cli liquiditytypes.QueryClient, orderer stri
 	if err != nil {
 		return nil, err
 	}
-
-	//blockHeight := header.Get(grpctypes.GRPCBlockHeightHeader)
-	//resHeight, err := strconv.ParseInt(blockHeight[0], 10, 64)
-	//if err != nil {
-	//	return nil, err
-	//}
-	//if resHeight != height {
-	//	fmt.Println(fmt.Errorf("pairs height error %d, %d", resHeight, height))
-	//}
 
 	return res.Orders, nil
 }
