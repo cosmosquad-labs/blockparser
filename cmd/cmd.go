@@ -2,18 +2,17 @@ package cmd
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"log"
-	"net/url"
 	"strconv"
 	"time"
 
-	"github.com/gorilla/websocket"
-	"github.com/tendermint/tendermint/libs/json"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 
-	ctypes "github.com/tendermint/tendermint/rpc/core/types"
+	rpchttp "github.com/tendermint/tendermint/rpc/client/http"
+	ttypes "github.com/tendermint/tendermint/types"
 
 	grpctypes "github.com/cosmos/cosmos-sdk/types/grpc"
 	"github.com/cosmos/cosmos-sdk/types/query"
@@ -50,50 +49,34 @@ func NewBlockParserCmd() *cobra.Command {
 
 func Main(dir string, startHeight, endHeight int64, addrInput string) error {
 
-	u := url.URL{Scheme: "ws", Host: "127.0.0.1:26657", Path: "/websocket"}
-	fmt.Printf("connecting to %s", u.String())
-
-	c, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
+	//// TODO: start after all synced
+	//// ======================================================================= websocket
+	client, err := rpchttp.New("tcp://127.0.0.1:26657", "/websocket")
 	if err != nil {
-		fmt.Println("dial:", err)
-	}
-	defer c.Close()
-
-	//done := make(chan struct{})
-	//
-	//go func() {
-	//	defer close(done)
-	//	for {
-	//		_, message, err := c.ReadMessage()
-	//		if err != nil {
-	//			log.Println("read:", err)
-	//			return
-	//		}
-	//		log.Printf("recv: %s", message)
-	//	}
-	//}()
-
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-
-	//query := `{"jsonrpc":"2.0","method":"subscribe","id":0,"params":{"query":"tm.event='NewBlock'"}}`
-	query := `{"jsonrpc":"2.0","method":"consensus_params","id":0,"params":{"height":"402001"}}`
-	err = c.WriteMessage(websocket.TextMessage, []byte(query))
-	if err != nil {
-		log.Println("write:", err)
+		log.Fatal(err)
 	}
 
-	cons := ConsensusParamsResponse{}
-	_, res, err := c.ReadMessage()
-	err = json.Unmarshal(res, &cons)
-	fmt.Println(cons, err)
-	fmt.Println(string(res))
+	err = client.Start()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer client.Stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+	query := "tm.event = 'NewBlock'"
+	txs, err := client.Subscribe(ctx, "test-client", query)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	// =============================================================
-	//addr, err := sdk.AccAddressFromBech32(addrInput)
-	//if err != nil {
-	//	return err
-	//}
+	for e := range txs {
+		switch data := e.Data.(type) {
+		case ttypes.EventDataNewBlock:
+			fmt.Printf("Block %s - Height: %d \n", hex.EncodeToString(data.Block.Hash()), data.Block.Height)
+			break
+		}
+	}
+	//// ======================================================================= websocket
 
 	// Create a connection to the gRPC server.
 	grpcConn, err := grpc.Dial(
@@ -154,7 +137,7 @@ func Main(dir string, startHeight, endHeight int64, addrInput string) error {
 	for i := startHeight; i < endHeight; i++ {
 		_, err := QueryParamsGRPC(liquidityClient, i)
 		if err != nil {
-			fmt.Println("prunned height", i)
+			//fmt.Println("prunned height", i)
 			continue
 		}
 
@@ -421,10 +404,4 @@ func QueryOrders(app app.App, pairId uint64, height int64) (poolsRes []liquidity
 	var orders liquiditytypes.QueryOrdersResponse
 	orders.Unmarshal(res.Value)
 	return orders.Orders, nil
-}
-
-type ConsensusParamsResponse struct {
-	Jsonrpc string                       `json:"jsonrpc"`
-	ID      int                          `json:"id"`
-	Result  ctypes.ResultConsensusParams `json:"result"`
 }
