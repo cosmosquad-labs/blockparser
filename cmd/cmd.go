@@ -8,23 +8,24 @@ import (
 	"strconv"
 	"time"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/syndtr/goleveldb/leveldb"
-	"github.com/syndtr/goleveldb/leveldb/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 
+	"github.com/spf13/cobra"
+
+	abci "github.com/tendermint/tendermint/abci/types"
 	rpchttp "github.com/tendermint/tendermint/rpc/client/http"
 	ttypes "github.com/tendermint/tendermint/types"
 
 	grpctypes "github.com/cosmos/cosmos-sdk/types/grpc"
 	"github.com/cosmos/cosmos-sdk/types/query"
-	crecmd "github.com/crescent-network/crescent/v2/cmd/crescentd/cmd"
-	liquiditytypes "github.com/crescent-network/crescent/v2/x/liquidity/types"
-	"github.com/spf13/cobra"
 
 	"github.com/crescent-network/crescent/v2/app"
-	abci "github.com/tendermint/tendermint/abci/types"
+	chain "github.com/crescent-network/crescent/v2/app"
+	"github.com/crescent-network/crescent/v2/app/params"
+	crecmd "github.com/crescent-network/crescent/v2/cmd/crescentd/cmd"
+	liquiditytypes "github.com/crescent-network/crescent/v2/x/liquidity/types"
 
 	"github.com/cosmosquad-labs/blockparser/api/server"
 )
@@ -41,31 +42,8 @@ type Context struct {
 
 	SyncDB *leveldb.DB
 
+	Enc params.EncodingConfig
 	Config
-}
-
-var SyncPrefix = []byte{0x01}
-
-func GetSyncKey(height int64) []byte {
-	return append(SyncPrefix, sdk.Uint64ToBigEndian(uint64(height))...)
-}
-
-func ParseSyncKey(key []byte) int64 {
-	return int64(sdk.BigEndianToUint64(key[1:]))
-}
-
-func (ctx Context) SyncLog(height int64) error {
-	return ctx.SyncDB.Put(GetSyncKey(height), []byte(time.Now().UTC().String()), nil)
-}
-
-func (ctx Context) SyncLogPrint() error {
-	iter := ctx.SyncDB.NewIterator(util.BytesPrefix(SyncPrefix), nil)
-	for iter.Next() {
-		// Use key/value.
-		fmt.Println(ParseSyncKey(iter.Key()), string(iter.Value()))
-	}
-	iter.Release()
-	return iter.Error()
 }
 
 type Config struct {
@@ -125,10 +103,11 @@ func NewBlockParserCmd() *cobra.Command {
 
 func Main(dir string, startHeight, endHeight int64, addrInput string, config Config) error {
 
-	go server.Serv()
-
 	var ctx Context
 	ctx.Config = config
+	ctx.Enc = chain.MakeEncodingConfig()
+
+	go server.Serv()
 
 	// ================= set db ==============================
 	syncdb, err := leveldb.OpenFile(ctx.Config.Dir+"mmapi/sync", nil)
@@ -184,7 +163,18 @@ func Main(dir string, startHeight, endHeight int64, addrInput string, config Con
 			case ttypes.EventDataNewBlock:
 				fmt.Printf("Block %s - Height: %d \n", hex.EncodeToString(data.Block.Hash()), data.Block.Height)
 				// TODO: trigger for data sync
+				//go func() {
+				//	pairs, err := QueryPairsGRPC(ctx.LiquidityClient, data.Block.Height)
+				//	if err != nil {
+				//		fmt.Println(err)
+				//		return
+				//	}
+				//	ctx.SetPairs(pairs, data.Block.Height)
+				//	ctx.PairsPrint()
+				//}()
 				for _, addr := range ctx.Config.AccList {
+					// TODO: go routine to each acc
+
 					orders, err := QueryOrdersByOrdererGRPC(ctx.LiquidityClient, addr, data.Block.Height)
 					if err != nil {
 						fmt.Println(err)
@@ -195,11 +185,8 @@ func Main(dir string, startHeight, endHeight int64, addrInput string, config Con
 					}
 				}
 
-				err := ctx.SyncLog(data.Block.Height)
-				if err != nil {
-					fmt.Println(err)
-				}
-				err = ctx.SyncLogPrint()
+				ctx.SyncLog(data.Block.Height)
+				//err = ctx.SyncLogPrint()
 				if err != nil {
 					fmt.Println(err)
 				}
